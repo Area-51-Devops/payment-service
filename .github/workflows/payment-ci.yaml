@@ -19,7 +19,7 @@ jobs:
       packages: read
     with:
       working_directory: "services/payment-service"
-      image_name: "services/payment-service"
+      image_name: "area51devops/payment-service"
       service-name: "payment-service"
       docker_context: "services"
       dockerfile_path: "payment-service/Dockerfile"
