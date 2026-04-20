@@ -1,12 +1,5 @@
 name: Payment Service CI
 
-# ─────────────────────────────────────────────────────────────
-# Flow:
-#   ci-sonar ─┐
-#             ├──► prod-gate ───► ci-image
-#   ci-snyk ──┘
-# ─────────────────────────────────────────────────────────────
-
 on:
   push:
     paths:
@@ -19,7 +12,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # ── Stage 1a: SonarQube Scan + Quality Gate ────────────────
+
+  # ── Stage 1a: SonarQube Scan + Quality Gate ──────────────────────────────
   ci-sonar:
     uses: Area-51-Devops/ci-templates/.github/workflows/ci-sonar.yml@newsep
     permissions:
@@ -32,7 +26,7 @@ jobs:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
-  # ── Stage 1b: Dependency Build + Snyk Scan ─────────────────
+  # ── Stage 1b: Dependency Build + Snyk Scan ───────────────────────────────
   ci-snyk:
     uses: Area-51-Devops/ci-templates/.github/workflows/ci-snyk.yml@newsep
     permissions:
@@ -43,22 +37,13 @@ jobs:
     secrets:
       SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
-  # ── Stage 2: MANUAL APPROVAL GATE ──────────────────────────
-  prod-gate:
-    name: "Approval Gate (main branch)"
+  # ── Stage 2: Build Image + Trivy Scan ONLY (no push) ─────────────────────
+  # Runs once both quality gates pass.
+  # run_trivy_only: true  → tells ci-image to scan but NOT push.
+  # Adjust the input flag to whatever your reusable workflow exposes
+  # for "scan only / no push" behaviour (e.g. run_build: false, push: false).
+  ci-image-scan:
     needs: [ci-sonar, ci-snyk]
-    if: |
-      github.event_name != 'pull_request' &&
-      github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: Gate   # 👈 MUST match your GitHub Environment name
-    steps:
-      - name: Waiting for approval
-        run: echo "Waiting for manual approval before building and pushing image"
-
-  # ── Stage 3: Build Image · Scan · Push ─────────────────────
-  ci-image:
-    needs: [ci-sonar, ci-snyk, prod-gate]
     uses: Area-51-Devops/ci-templates/.github/workflows/ci-image.yml@newsep
     permissions:
       contents: write
@@ -66,6 +51,49 @@ jobs:
       working_directory: "services/payment-service"
       image_name: "area51devops/payment-service"
       run_build: false
+      push: false                        # 👈 scan only, hold the push
+      docker_context: "services"
+      dockerfile_path: "payment-service/Dockerfile"
+      service-name: "payment-service"
+    secrets:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+
+  # ── Stage 3: Manual Approval Gate ────────────────────────────────────────
+  # Skipped entirely on pull_request and non-main branches.
+  # On main: a reviewer must approve in the GitHub UI before Stage 4 runs.
+  prod-gate:
+    needs: [ci-image-scan]
+    if: |
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: Gate          # 👈 your existing protected environment
+    steps:
+      - name: Awaiting manual approval
+        run: echo "Trivy scan passed. Waiting for approval before push..."
+
+  # ── Stage 4: Push Image + Notify ─────────────────────────────────────────
+  # Only runs after approval is granted.
+  # Re-uses the same reusable workflow with push enabled this time.
+  ci-image-push:
+    needs: [prod-gate]
+    if: |
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
+    uses: Area-51-Devops/ci-templates/.github/workflows/ci-image.yml@newsep
+    permissions:
+      contents: write
+    with:
+      working_directory: "services/payment-service"
+      image_name: "area51devops/payment-service"
+      run_build: false
+      push: true                         # 👈 now push the image
       docker_context: "services"
       dockerfile_path: "payment-service/Dockerfile"
       service-name: "payment-service"
