@@ -51,7 +51,7 @@ jobs:
       github.event_name != 'pull_request' &&
       github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    environment: gate   # 👈 MUST match your GitHub Environment name
+    environment: Gate   # 👈 MUST match your GitHub Environment name
     steps:
       - name: Waiting for approval
         run: echo "Waiting for manual approval before building and pushing image"
